@@ -1,5 +1,6 @@
 import gymnasium as gym
 import numpy as np
+import pygame
 
 # Snake Directions
 UP = 0
@@ -8,8 +9,9 @@ DOWN = 2
 LEFT = 3
 
 class SnakeEnv(gym.Env):
-    def __innit__(self):
-        super().__innit__()
+    def __init__(self):
+        super().__init__()
+        
         self.grid_size = 20
     
         # All the possible actions the snake can take: 
@@ -17,7 +19,7 @@ class SnakeEnv(gym.Env):
 
         self.action_space = gym.spaces.Discrete(3)
 
-        # binary array of 11 sensors that the agent sees:
+        # array of 11 binary sensors that the agent sees:
         #
         # [danger_straight, danger_right, danger_left,
         # moving_up, moving_right, moving_down, moving_left,
@@ -34,9 +36,11 @@ class SnakeEnv(gym.Env):
     
     # Start a new game, return the initial state
     def reset(self, seed=None):
-        super.reset(seed=seed)
+        
+        super(SnakeEnv, self).reset(seed=seed)
 
         mid = self.grid_size // 2
+        
         self.snake = [
             [mid, mid],
             [mid - 1, mid],
@@ -86,19 +90,21 @@ class SnakeEnv(gym.Env):
         # Check if snake died
         terminated = False
         if (new_head[0] < 0 or new_head[0] >= self.grid_size or
-            new_head[1] < 0 or new_head[1 >= self.grid_size] or
+            new_head[1] < 0 or new_head[1] >= self.grid_size or
             new_head in self.snake[1:]):
             terminated = True
         
         # Check if snake ate food
         ate_food = new_head == self.food
-        if ate_food:
+        if ate_food and not terminated:
             self.score += 1
             self.snake.insert(0, new_head)
             self._place_food()
         else:
             self.snake.insert(0, new_head)
-            self.snake.pop()
+            if not terminated:
+                self.snake.pop()
+    
 
         # Calculate reward
         if terminated:
@@ -117,17 +123,42 @@ class SnakeEnv(gym.Env):
 
     # Draw the game visually
     def render(self):
-        pass
-    # TODO: import pygame at the top of the file
-    # TODO: initialize pygame if it hasn't been initialized yet
-    # TODO: create a window sized grid_size * cell_size (cell_size = 30 is reasonable)
-    # TODO: draw a black background
-    # TODO: draw each snake segment as a green rectangle
-    # TODO: draw the head as a slightly different shade of green so it's visible
-    # TODO: draw the food as a red rectangle
-    # TODO: draw the score as text in the corner
-    # TODO: call pygame.display.flip() to update the screen
-    # TODO: handle pygame.QUIT event so the window can be closed
+        if not hasattr(self, 'screen'):
+            pygame.init()
+            self.cell_size = 30
+            self.screen = pygame.display.set_mode(
+                (self.grid_size * self.cell_size, self.grid_size * self.cell_size)
+            )
+            pygame.display.set_caption('Snake RL')
+        
+        # Draw background
+        self.screen.fill((0, 0, 0))
+
+        # Draw snake
+        for i, segment in enumerate(self.snake):
+            color = (0, 200, 0) if i > 0 else (0, 255, 0)
+            pygame.draw.rect(self.screen, color, (
+                segment[0] * self.cell_size,
+                segment[1] * self.cell_size,
+                self.cell_size,
+                self.cell_size
+            ))
+
+        # Draw food
+        pygame.draw.rect(self.screen, (255, 0, 0), (
+            self.food[0] * self.cell_size,
+            self.food[1] * self.cell_size,
+            self.cell_size,
+            self.cell_size
+        ))
+
+        # Draw score
+        font = pygame.font.SysFont('Arial', 24)
+        score_text = font.render(f'Score: {self.score}', True, (255, 255, 255))
+        self.screen.blit(score_text, (5, 5))
+
+        # Update the display
+        pygame.display.flip()
 
     def _place_food(self):
         while True:
@@ -140,16 +171,51 @@ class SnakeEnv(gym.Env):
         else:
             self.food = None
 
+    # Check if coords are dangerous
+    def _is_dangerous(self, x, y):
+        return (x < 0 or x >= self.grid_size or
+                y < 0 or y >= self.grid_size or
+                [x, y] in self.snake[1:])
+
     def _get_observation(self):
-        pass
-    # TODO: get the current head position and direction
-    # TODO: calculate danger straight, danger right, danger left
-    #       (is there a wall or snake body one square in that direction?)
-    # TODO: calculate moving_up, moving_right, moving_down, moving_left
-    #       (just which direction are we currently facing, as 4 binary values)
-    # TODO: calculate food_up, food_right, food_down, food_left
-    #       (is the food in that general direction relative to the head?)
-    # TODO: return all 11 values as a numpy array using np.array([...], dtype=np.float32)
+        head = self.snake[0]
+
+        # Danger values (purely the coords around snake's head)
+        ahead_coords = {
+            UP:    [head[0],     head[1] - 1],
+            DOWN:  [head[0],     head[1] + 1],
+            RIGHT: [head[0] + 1, head[1]    ],
+            LEFT:  [head[0] - 1, head[1]    ],
+        }
+
+        # Convert surrounding coords of the head to directions
+        # that the snake is facing using clockwise modulo 
+        straight = ahead_coords[self.direction]
+        right    = ahead_coords[(self.direction + 1) % 4]
+        left     = ahead_coords[(self.direction - 1) % 4]
+
+        # Danger values of each direction
+        danger_straight = 1 if self._is_dangerous(straight[0], straight[1]) else 0
+        danger_right    = 1 if self._is_dangerous(right[0],    right[1])    else 0
+        danger_left     = 1 if self._is_dangerous(left[0],     left[1])     else 0
+
+        # Direction values
+        moving_up    = 1 if self.direction == UP    else 0
+        moving_right = 1 if self.direction == RIGHT else 0
+        moving_down  = 1 if self.direction == DOWN  else 0
+        moving_left  = 1 if self.direction == LEFT  else 0
+
+        # Food values
+        food_up    = 1 if self.food[1] < head[1] else 0
+        food_down  = 1 if self.food[1] > head[1] else 0
+        food_right = 1 if self.food[0] > head[0] else 0
+        food_left  = 1 if self.food[0] < head[0] else 0
+
+        return np.array([
+            danger_straight, danger_right, danger_left,
+            moving_up, moving_right, moving_down, moving_left,
+            food_up, food_right, food_down, food_left
+        ], dtype=np.float32)
 
 
     def close(self):
